@@ -86,15 +86,29 @@
           padding: 16px; margin-bottom: 14px; }
   .card h3 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 
-  /* Level ring */
-  .ring-wrap { display: flex; align-items: center; gap: 18px; }
-  .ring { --p: 0; width: 132px; height: 132px; border-radius: 50%; flex: none;
-          background: conic-gradient(var(--accent) calc(var(--p) * 1%), var(--field) 0);
-          display: grid; place-items: center; position: relative; transition: background .4s; }
-  .ring::before { content: ""; position: absolute; inset: 12px; border-radius: 50%; background: var(--card); }
-  .ring b { position: relative; font-size: 30px; font-weight: 800; }
-  .ring b small { font-size: 14px; font-weight: 600; color: var(--muted); }
-  .ring-meta { flex: 1; }
+  .ring-meta { flex: 1; align-self: center; }
+
+  /* Tank level GUI */
+  .tankwrap { display: flex; gap: 18px; align-items: stretch; }
+  .tank { position: relative; width: 118px; height: 190px; flex: none; border: 3px solid var(--line);
+          border-radius: 16px 16px 14px 14px; background: var(--field); overflow: hidden;
+          box-shadow: inset 0 2px 6px rgba(0,0,0,.06); }
+  .liquid { position: absolute; left: 0; right: 0; bottom: 0; height: 0;
+            background: linear-gradient(180deg, #22d3ee, #0ea5a5);
+            transition: height .7s cubic-bezier(.34,1.2,.5,1), background .4s; }
+  .liquid.low  { background: linear-gradient(180deg, #fcd34d, #d97706); }
+  .liquid.crit { background: linear-gradient(180deg, #fca5a5, #dc2626); }
+  .liquid .surface { position: absolute; top: -8px; left: 0; right: 0; height: 10px;
+            background-repeat: repeat-x; animation: wave 2.6s linear infinite;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='10'%3E%3Cpath d='M0 5 C15 0 15 10 30 5 S45 10 60 5 L60 10 L0 10 Z' fill='%23ffffff' fill-opacity='0.32'/%3E%3C/svg%3E"); }
+  @keyframes wave { to { background-position-x: 60px; } }
+  .tank .ticks i { position: absolute; left: 0; right: 0; height: 1px; background: var(--line); opacity: .7; }
+  .tanklabel { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+               justify-content: center; pointer-events: none; }
+  .tanklabel b { font-size: 30px; font-weight: 800; text-shadow: 0 1px 3px rgba(255,255,255,.5); }
+  @media (prefers-color-scheme: dark) { .tanklabel b { text-shadow: 0 1px 3px rgba(0,0,0,.6); } }
+  .tanklabel small { font-size: 13px; font-weight: 600; color: var(--muted); }
+
   .kv { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
   .kv:last-child { border-bottom: 0; } .kv span { color: var(--muted); } .kv b { font-variant-numeric: tabular-nums; }
 
@@ -167,9 +181,13 @@
 
       <div id="connected" style="display:none">
         <div class="card">
-          <h3>Fuel level</h3>
-          <div class="ring-wrap">
-            <div class="ring" id="ring"><b id="levelPct">—<small>%</small></b></div>
+          <h3>Tank level</h3>
+          <div class="tankwrap">
+            <div class="tank">
+              <div class="liquid" id="liquid"><span class="surface"></span></div>
+              <div class="ticks"><i style="bottom:75%"></i><i style="bottom:50%"></i><i style="bottom:25%"></i></div>
+              <div class="tanklabel"><b id="levelPct">—</b><small>%</small></div>
+            </div>
             <div class="ring-meta">
               <div class="kv"><span>Volume</span><b id="vVol">—</b></div>
               <div class="kv"><span>Height</span><b id="vHeight">—</b></div>
@@ -259,6 +277,14 @@
       </div>
     </section>
 
+    <!-- DATA (all readings) -->
+    <section class="view" id="view-data">
+      <div class="card"><h3>Fuel</h3><div id="dataFuel"><div class="hint">Connect to see readings.</div></div></div>
+      <div class="card"><h3>Battery (BQ35100)</h3><div id="dataBatt"><div class="hint">—</div></div></div>
+      <div class="card"><h3>Motion (IIS2DLPC)</h3><div id="dataMotion"><div class="hint">—</div></div></div>
+      <div class="card"><h3>Calibration</h3><div id="dataCal"><div class="hint">—</div></div></div>
+    </section>
+
     <!-- LOG -->
     <section class="view" id="view-log">
       <div class="card"><h3>Event log</h3><div id="log"></div></div>
@@ -266,7 +292,8 @@
   </main>
 
   <nav id="tabbar">
-    <button data-tab="live" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13a9 9 0 0 1 18 0"/><path d="M12 13l4-3"/></svg>Live</button>
+    <button data-tab="live" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="3" width="10" height="18" rx="3"/><path d="M7 13h10"/></svg>Level</button>
+    <button data-tab="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Data</button>
     <button data-tab="cal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20l6-6M14 4l6 6M15 3l6 6-9 9-6 1 1-6z"/></svg>Calibrate</button>
     <button data-tab="tank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="4" width="14" height="16" rx="3"/><path d="M5 12h14"/></svg>Tank</button>
     <button data-tab="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Log</button>
@@ -290,6 +317,7 @@ const CMD = { EMPTY: 0x01, FULL: 0x02, CLEAR: 0x03, ORIENT: 0x10 };
 
 let device = null, server = null, ch = {};
 let lastStable = false;
+const state = { meas: null, batt: null, motion: null, cal: null };  // latest decoded readings
 
 // ── helpers ──
 const $ = id => document.getElementById(id);
@@ -306,15 +334,63 @@ function setStatus(text, state) { // state: '', 'on', 'busy'
 const num = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : v.toFixed(d);
 
 function badge(text, cls) { return `<span class="badge ${cls||''}">${text}</span>`; }
+function kvHTML(rows) { return rows.map(([k, v]) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`).join(""); }
+const hx = v => "0x" + v.toString(16).padStart(2, "0");
+
+// Render the "Data" tab — every decoded reading, grouped by subsystem.
+function renderData() {
+  const m = state.meas, b = state.batt, mo = state.motion, c = state.cal;
+  if (m) $("dataFuel").innerHTML = kvHTML([
+    ["Level", m.cal_valid ? m.level.toFixed(2) + " %" : "—"],
+    ["Volume", m.volume_valid ? m.volume.toFixed(0) + " mL" : "—"],
+    ["Fill height", m.height_valid ? m.fill_height.toFixed(0) + " mm" : "—"],
+    ["Capacity", m.capacity_valid ? m.capacity.toFixed(0) + " mL" : "—"],
+    ["Smoothed signal", m.hw_valid ? m.smooth.toFixed(4) + " pF" : "—"],
+    ["Raw differential", m.hw_valid ? m.hw_diff.toFixed(4) + " pF" : "—"],
+    ["Delta vs empty", m.delta_valid ? m.delta.toFixed(4) + " pF" : "—"],
+    ["Stable", m.stable ? "yes" : "no"],
+    ["Calibrated", m.cal_valid ? "yes" : "no"],
+    ["Clamped", m.clamped ? "yes" : "no"],
+    ["Flags", hx(m.flags)],
+  ]);
+  if (b) $("dataBatt").innerHTML = kvHTML([
+    ["Voltage", b.mv !== null ? b.mv + " mV" : "—"],
+    ["Current", b.current !== null ? b.current + " mA" : "—"],
+    ["Charge since start", b.uah !== null ? (b.uah / 1000).toFixed(2) + " mAh" : "—"],
+    ["Temp (external NTC)", b.ntc_c !== null ? b.ntc_c.toFixed(1) + " °C" : "—"],
+    ["Temp (die)", b.die_c !== null ? b.die_c.toFixed(1) + " °C" : "—"],
+    ["Gauge status", hx(b.status)],
+    ["Gauge alert", hx(b.alert)],
+    ["Low battery", b.low ? "yes" : "no"],
+    ["Gauge online", b.online ? "yes" : "no"],
+  ]);
+  if (mo) $("dataMotion").innerHTML = kvHTML([
+    ["Acceleration |a|", mo.accel !== null ? mo.accel.toFixed(2) + " m/s²" : "—"],
+    ["Motion (std)", mo.std !== null ? mo.std.toFixed(3) + " m/s²" : "—"],
+    ["Tilt from mount", mo.tilt !== null ? mo.tilt + " °" : "—"],
+    ["Moving", mo.moving ? "yes" : "no"],
+    ["Tamper", mo.tamper ? "yes" : "no"],
+    ["Reference set", mo.ref_set ? "yes" : "no"],
+    ["Accel online", mo.online ? "yes" : "no"],
+  ]);
+  if (c) $("dataCal").innerHTML = kvHTML([
+    ["Empty reference", Number.isNaN(c.empty) ? "—" : c.empty.toFixed(3) + " pF"],
+    ["Full reference", Number.isNaN(c.full) ? "—" : c.full.toFixed(3) + " pF"],
+    ["Calibrated", c.valid ? "yes" : "no"],
+    ["Source", ["none", "NVS", "live"][c.source] ?? "—"],
+  ]);
+}
 
 // ── decoders (little-endian) ──
 function decMeas(dv) {
   const f = i => dv.getFloat32(i, true);
   const flags = dv.getUint8(26);
   return {
-    smooth: f(4), fill_height: f(12), volume: f(16), capacity: f(20),
-    level: dv.getUint16(24, true) / 100,
+    hw_diff: f(0), smooth: f(4), delta: f(8),
+    fill_height: f(12), volume: f(16), capacity: f(20),
+    level: dv.getUint16(24, true) / 100, flags,
     stable: !!(flags & 1), cal_valid: !!(flags & 2),
+    hw_valid: !!(flags & 4), delta_valid: !!(flags & 8),
     height_valid: !!(flags & 16), volume_valid: !!(flags & 32), capacity_valid: !!(flags & 64),
     clamped: !!(flags & 128),
   };
@@ -327,7 +403,8 @@ function decBatt(dv) {
   const flags = dv.getUint8(8);
   const online = !!(flags & 1);
   return {
-    online, mv: (online && flags & 2) ? dv.getUint16(0, true) : null,
+    online, flags, status: dv.getUint8(6), alert: dv.getUint8(7),
+    mv: (online && flags & 2) ? dv.getUint16(0, true) : null,
     ntc_c: (online && flags & 4) ? dv.getUint16(2, true) / 10 - 273.15 : null,
     die_c: (online && flags & 16) ? dv.getUint16(4, true) / 10 - 273.15 : null,
     low: !!(flags & 8),
@@ -337,18 +414,24 @@ function decBatt(dv) {
 }
 function decMotion(dv) {
   const flags = dv.getUint8(8);
-  const ref = !!(flags & 16);
-  return { online: !!(flags & 1), std: (flags & 1) ? dv.getFloat32(4, true) : null,
+  const ref = !!(flags & 16), online = !!(flags & 1);
+  return { online, flags,
+           accel: online ? dv.getFloat32(0, true) : null,
+           std: online ? dv.getFloat32(4, true) : null,
            moving: !!(flags & 4), tamper: !!(flags & 8), ref_set: ref,
            tilt: ref ? dv.getUint8(9) : null };
 }
 
 // ── UI updates ──
 function onMeas(dv) {
-  const m = decMeas(dv); lastStable = m.stable;
-  const pct = m.cal_valid ? m.level : null;
-  $("ring").style.setProperty("--p", pct === null ? 0 : Math.max(0, Math.min(100, pct)));
-  $("levelPct").innerHTML = (pct === null ? "—" : pct.toFixed(1)) + '<small>%</small>';
+  const m = decMeas(dv); state.meas = m; lastStable = m.stable;
+  // Tank fill GUI: liquid height = level% (0 when uncalibrated), colour by level.
+  const pct = m.cal_valid ? Math.max(0, Math.min(100, m.level)) : 0;
+  const liq = $("liquid");
+  liq.style.height = pct + "%";
+  liq.classList.toggle("crit", m.cal_valid && m.level < 8);
+  liq.classList.toggle("low",  m.cal_valid && m.level >= 8 && m.level < 20);
+  $("levelPct").textContent = m.cal_valid ? m.level.toFixed(1) : "—";
   $("vVol").textContent    = m.volume_valid   ? num(m.volume, 0) + " mL" : "—";
   $("vHeight").textContent = m.height_valid   ? num(m.fill_height, 0) + " mm" : "—";
   $("vCap").textContent    = m.capacity_valid ? num(m.capacity, 0) + " mL" : "—";
@@ -361,25 +444,28 @@ function onMeas(dv) {
   // stable-gate the calibration buttons
   $("btnEmpty").disabled = !m.stable;
   $("btnFull").disabled  = !m.stable;
+  renderData();
 }
 function onCal(dv) {
-  const c = decCal(dv);
+  const c = decCal(dv); state.cal = c;
   $("cValid").textContent = c.valid ? "Yes" : "No";
   $("cEmpty").textContent = Number.isNaN(c.empty) ? "—" : c.empty.toFixed(3) + " pF";
   $("cFull").textContent  = Number.isNaN(c.full)  ? "—" : c.full.toFixed(3) + " pF";
   $("cSrc").textContent   = ["none", "NVS", "live"][c.source] ?? "—";
   $("calBadges").innerHTML = badge(c.valid ? "Two-point active" : "Not calibrated", c.valid ? "ok" : "warn");
   $("btnClear").disabled = false;
+  renderData();
 }
 function onBatt(dv) {
-  const b = decBatt(dv);
+  const b = decBatt(dv); state.batt = b;
   $("bMv").textContent = b.mv ?? "—";
   $("bMa").textContent = b.current ?? "—";
   $("bT").textContent  = b.ntc_c !== null ? b.ntc_c.toFixed(1) : (b.die_c !== null ? b.die_c.toFixed(1) : "—");
   $("bQ").textContent  = b.uah !== null ? (b.uah / 1000).toFixed(2) : "—";
+  renderData();
 }
 function onMotion(dv) {
-  const m = decMotion(dv);
+  const m = decMotion(dv); state.motion = m;
   $("mTilt").textContent = m.tilt ?? "—";
   $("oTilt").textContent = m.tilt !== null ? m.tilt + "°" : "—";
   $("mStd").textContent  = m.std !== null ? m.std.toFixed(3) : "—";
@@ -387,6 +473,7 @@ function onMotion(dv) {
     badge(m.moving ? "Moving" : "Still", m.moving ? "warn" : "ok") +
     (m.tamper ? badge("TAMPER", "bad") : badge("Secure", "ok")) +
     badge(m.ref_set ? "Ref set" : "No ref", m.ref_set ? "" : "warn");
+  renderData();
 }
 function decTank(dv) {
   return { shape: dv.getUint8(0), height: dv.getFloat32(4, true),
@@ -398,8 +485,11 @@ async function connect() {
   if (!navigator.bluetooth) { log("Web Bluetooth not available in this browser.", "e"); return; }
   try {
     setStatus("Scanning…", "busy");
+    // Match by name (from the legacy advert) OR service UUID (from the scan
+    // response). Name is the reliable path — Android/Chrome always reports it.
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [U.svc] }], optionalServices: [U.svc],
+      filters: [{ namePrefix: "FuelTraQ" }, { services: [U.svc] }],
+      optionalServices: [U.svc],
     });
     device.addEventListener("gattserverdisconnected", onDisconnected);
     setStatus("Connecting…", "busy");
