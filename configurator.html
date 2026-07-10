@@ -1,0 +1,502 @@
+<!--
+  FuelTraQ Configurator — Web Bluetooth app (Xeleqt)
+  ===================================================
+  A mobile-styled configurator for the FuelTraQ sensor. It is the ONLY party that
+  connects (over the sensor's connectable "Set B" service window); the gateway
+  only listens. See docs/ble_architecture.md.
+
+  WHAT IT DOES
+    • Connect to a FuelTraQ unit (filters on the Fuel Level service UUID).
+    • Live telemetry: fuel level / height / volume / capacity, battery, motion/tilt.
+    • Two-point calibration (SET EMPTY / SET FULL / CLEAR) with stable-gating.
+    • Anti-tamper orientation reference (SET ORIENT).
+    • Tank geometry (TANK_CONFIG) read/write.
+
+  HOW TO RUN (Web Bluetooth needs a secure context + an extended-advertising radio)
+    • Android phone (recommended, "mobile app"): host over HTTPS (e.g. GitHub
+      Pages) and open in Chrome. The phone's radio supports BLE 5 extended adv,
+      which Set B requires.
+    • Desktop Chrome/Edge: open this file directly (file:// is a secure context) —
+      but you need a BLE 5.0 adapter (many built-in adapters are legacy-only and
+      cannot see the extended Set B advert).
+    • iOS is not supported (no Web Bluetooth in Safari/Chrome iOS).
+
+  BEFORE CONNECTING: the sensor is only connectable during its Set B window —
+  nudge the unit (accelerometer wake) or reboot it, then tap Connect within ~2 min.
+
+  OTA firmware updates use nRF Connect Device Manager (SMP), not this app.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>FuelTraQ Configurator</title>
+<style>
+  :root {
+    --accent: #0ea5a5;         /* teal */
+    --accent-2: #0b7285;
+    --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --idle: #94a3b8;
+    --bg: #eef2f5; --card: #ffffff; --ink: #0f172a; --muted: #64748b;
+    --line: #e2e8f0; --field: #f1f5f9;
+    --radius: 18px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b1220; --card: #131c2e; --ink: #e8eef6; --muted: #93a2b8;
+      --line: #22304a; --field: #1b2740;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    display: flex; justify-content: center; align-items: stretch;
+  }
+  /* Phone frame */
+  .app {
+    width: 100%; max-width: 440px; min-height: 100dvh;
+    background: var(--bg); display: flex; flex-direction: column;
+    position: relative; overflow: hidden;
+  }
+  @media (min-width: 460px) {
+    body { align-items: center; padding: 16px; }
+    .app { min-height: 0; height: min(920px, calc(100dvh - 32px));
+           border-radius: 34px; box-shadow: 0 24px 60px rgba(2,8,23,.35);
+           border: 1px solid var(--line); }
+  }
+
+  /* App bar */
+  header {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; padding: calc(env(safe-area-inset-top) + 14px) 18px 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .logo { width: 38px; height: 38px; border-radius: 11px; background: rgba(255,255,255,.16);
+          display: grid; place-items: center; font-weight: 800; font-size: 18px; letter-spacing: -1px; }
+  .titles { flex: 1; line-height: 1.15; }
+  .titles .brand { font-size: 12px; opacity: .85; letter-spacing: .12em; text-transform: uppercase; }
+  .titles .name  { font-size: 18px; font-weight: 700; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600;
+            background: rgba(0,0,0,.18); padding: 6px 10px; border-radius: 999px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); box-shadow: 0 0 0 3px rgba(255,255,255,.12); }
+  .dot.on { background: #4ade80; } .dot.busy { background: #fbbf24; }
+
+  /* Content */
+  main { flex: 1; overflow-y: auto; padding: 16px 16px 96px; -webkit-overflow-scrolling: touch; }
+  .view { display: none; } .view.active { display: block; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 16px; margin-bottom: 14px; }
+  .card h3 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+
+  /* Level ring */
+  .ring-wrap { display: flex; align-items: center; gap: 18px; }
+  .ring { --p: 0; width: 132px; height: 132px; border-radius: 50%; flex: none;
+          background: conic-gradient(var(--accent) calc(var(--p) * 1%), var(--field) 0);
+          display: grid; place-items: center; position: relative; transition: background .4s; }
+  .ring::before { content: ""; position: absolute; inset: 12px; border-radius: 50%; background: var(--card); }
+  .ring b { position: relative; font-size: 30px; font-weight: 800; }
+  .ring b small { font-size: 14px; font-weight: 600; color: var(--muted); }
+  .ring-meta { flex: 1; }
+  .kv { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+  .kv:last-child { border-bottom: 0; } .kv span { color: var(--muted); } .kv b { font-variant-numeric: tabular-nums; }
+
+  .badges { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 4px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
+           background: var(--field); color: var(--muted); }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { background: var(--field); border-radius: 14px; padding: 12px; }
+  .stat .l { font-size: 12px; color: var(--muted); } .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .u { font-size: 12px; color: var(--muted); font-weight: 600; }
+
+  /* Buttons + fields */
+  button { font: inherit; cursor: pointer; border: 0; border-radius: 13px; padding: 13px 16px; font-weight: 700; }
+  .btn { background: var(--accent); color: #fff; width: 100%; }
+  .btn:active { transform: scale(.98); } .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.ghost { background: var(--field); color: var(--ink); }
+  .btn.bad { background: color-mix(in srgb, var(--bad) 14%, var(--field)); color: var(--bad); }
+  .btn.row { width: auto; flex: 1; }
+  .btnrow { display: flex; gap: 10px; }
+  label.f { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 5px; }
+  input, select { width: 100%; font: inherit; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+                  background: var(--field); color: var(--ink); }
+  .seg { display: flex; background: var(--field); border-radius: 12px; padding: 4px; gap: 4px; }
+  .seg button { flex: 1; background: transparent; color: var(--muted); padding: 9px; }
+  .seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .hint { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+  /* Log */
+  #log { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
+         white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+  #log .t { color: var(--muted); } #log .e { color: var(--bad); } #log .g { color: var(--ok); }
+
+  /* Bottom tab bar */
+  nav { position: absolute; left: 0; right: 0; bottom: 0; background: var(--card);
+        border-top: 1px solid var(--line); display: flex; padding: 8px 6px calc(env(safe-area-inset-bottom) + 8px); }
+  nav button { flex: 1; background: none; color: var(--muted); display: flex; flex-direction: column; align-items: center;
+               gap: 3px; font-size: 11px; font-weight: 600; padding: 6px 0; }
+  nav button.on { color: var(--accent); }
+  nav svg { width: 22px; height: 22px; }
+
+  .empty { text-align: center; color: var(--muted); padding: 40px 20px; }
+  .empty svg { width: 54px; height: 54px; opacity: .4; margin-bottom: 12px; }
+</style>
+
+<div class="app">
+  <header>
+    <div class="logo">X</div>
+    <div class="titles">
+      <div class="brand">Xeleqt</div>
+      <div class="name">FuelTraQ Configurator</div>
+    </div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Offline</span></div>
+  </header>
+
+  <main>
+    <!-- LIVE -->
+    <section class="view active" id="view-live">
+      <div id="disconnected" class="card">
+        <div class="empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2v20M5 9l7-7 7 7M7 14h10"/></svg>
+          <div style="font-weight:700;color:var(--ink);margin-bottom:6px">Not connected</div>
+          <div class="hint">Nudge or reboot the sensor to open its service window, then tap Connect.</div>
+        </div>
+        <button class="btn" id="btnConnect">Connect to a sensor</button>
+      </div>
+
+      <div id="connected" style="display:none">
+        <div class="card">
+          <h3>Fuel level</h3>
+          <div class="ring-wrap">
+            <div class="ring" id="ring"><b id="levelPct">—<small>%</small></b></div>
+            <div class="ring-meta">
+              <div class="kv"><span>Volume</span><b id="vVol">—</b></div>
+              <div class="kv"><span>Height</span><b id="vHeight">—</b></div>
+              <div class="kv"><span>Capacity</span><b id="vCap">—</b></div>
+              <div class="kv"><span>Signal</span><b id="vPf">—</b></div>
+            </div>
+          </div>
+          <div class="badges" id="liveBadges"></div>
+        </div>
+
+        <div class="card">
+          <h3>Battery</h3>
+          <div class="grid2">
+            <div class="stat"><div class="l">Voltage</div><div class="v"><span id="bMv">—</span> <span class="u">mV</span></div></div>
+            <div class="stat"><div class="l">Current</div><div class="v"><span id="bMa">—</span> <span class="u">mA</span></div></div>
+            <div class="stat"><div class="l">Temperature</div><div class="v"><span id="bT">—</span> <span class="u">°C</span></div></div>
+            <div class="stat"><div class="l">Charge</div><div class="v"><span id="bQ">—</span> <span class="u">mAh</span></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Motion &amp; tamper</h3>
+          <div class="grid2">
+            <div class="stat"><div class="l">Tilt from mount</div><div class="v"><span id="mTilt">—</span> <span class="u">°</span></div></div>
+            <div class="stat"><div class="l">Motion (std)</div><div class="v"><span id="mStd">—</span> <span class="u">m/s²</span></div></div>
+          </div>
+          <div class="badges" id="motionBadges" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CALIBRATE -->
+    <section class="view" id="view-cal">
+      <div class="card">
+        <h3>Calibration status</h3>
+        <div class="kv"><span>Calibrated</span><b id="cValid">—</b></div>
+        <div class="kv"><span>Empty reference</span><b id="cEmpty">—</b></div>
+        <div class="kv"><span>Full reference</span><b id="cFull">—</b></div>
+        <div class="kv"><span>Source</span><b id="cSrc">—</b></div>
+        <div class="badges" id="calBadges" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <h3>Two-point calibration</h3>
+        <p class="hint">Empty the tank &amp; wait for <b>Stable</b>, tap <b>Set empty</b>. Fill fully, wait for Stable, tap <b>Set full</b>. Empty/Full are disabled until the reading is stable.</p>
+        <div class="btnrow" style="margin-top:10px">
+          <button class="btn row ghost" id="btnEmpty" disabled>Set empty</button>
+          <button class="btn row ghost" id="btnFull" disabled>Set full</button>
+        </div>
+        <button class="btn bad" id="btnClear" style="margin-top:10px" disabled>Clear calibration</button>
+      </div>
+      <div class="card">
+        <h3>Anti-tamper orientation</h3>
+        <p class="hint">Mount the sensor in its final position, hold it still, then latch the current pose as the tamper reference. Current tilt: <b id="oTilt">—</b></p>
+        <button class="btn ghost" id="btnOrient" style="margin-top:10px" disabled>Set orientation reference</button>
+      </div>
+    </section>
+
+    <!-- TANK -->
+    <section class="view" id="view-tank">
+      <div class="card">
+        <h3>Tank geometry</h3>
+        <div class="seg" id="shapeSeg">
+          <button data-shape="0" class="on">Cylindrical</button>
+          <button data-shape="1">Rectangular</button>
+        </div>
+        <label class="f">Height (mm)</label>
+        <input id="tHeight" type="number" inputmode="decimal" placeholder="e.g. 150" />
+        <div id="cylFields">
+          <label class="f">Diameter (mm)</label>
+          <input id="tDia" type="number" inputmode="decimal" placeholder="e.g. 80" />
+        </div>
+        <div id="rectFields" style="display:none">
+          <label class="f">Length (mm)</label>
+          <input id="tLen" type="number" inputmode="decimal" placeholder="e.g. 200" />
+          <label class="f">Width (mm)</label>
+          <input id="tWid" type="number" inputmode="decimal" placeholder="e.g. 120" />
+        </div>
+        <button class="btn" id="btnTank" style="margin-top:14px" disabled>Save tank config</button>
+        <div class="kv" style="margin-top:12px"><span>Computed capacity</span><b id="tCap">—</b></div>
+      </div>
+      <div class="card">
+        <h3>Device</h3>
+        <div class="kv"><span>Name</span><b id="dName">—</b></div>
+        <div class="kv"><span>Firmware</span><b id="dFw">—</b></div>
+        <div class="kv"><span>Measure period</span><b id="dPeriod">—</b></div>
+        <button class="btn bad" id="btnDisconnect" style="margin-top:12px" disabled>Disconnect</button>
+      </div>
+    </section>
+
+    <!-- LOG -->
+    <section class="view" id="view-log">
+      <div class="card"><h3>Event log</h3><div id="log"></div></div>
+    </section>
+  </main>
+
+  <nav id="tabbar">
+    <button data-tab="live" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13a9 9 0 0 1 18 0"/><path d="M12 13l4-3"/></svg>Live</button>
+    <button data-tab="cal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20l6-6M14 4l6 6M15 3l6 6-9 9-6 1 1-6z"/></svg>Calibrate</button>
+    <button data-tab="tank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="4" width="14" height="16" rx="3"/><path d="M5 12h14"/></svg>Tank</button>
+    <button data-tab="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Log</button>
+  </nav>
+</div>
+
+<script>
+"use strict";
+// ── Service / characteristic UUIDs (must match fuel_ble_svc.h; lowercase) ──
+const U = {
+  svc:   "f0001000-1234-5678-abcd-ef0123456789",
+  meas:  "f0001001-1234-5678-abcd-ef0123456789",
+  cal:   "f0001002-1234-5678-abcd-ef0123456789",
+  cstat: "f0001003-1234-5678-abcd-ef0123456789",
+  info:  "f0001004-1234-5678-abcd-ef0123456789",
+  tank:  "f0001005-1234-5678-abcd-ef0123456789",
+  batt:  "f0001006-1234-5678-abcd-ef0123456789",
+  motion:"f0001007-1234-5678-abcd-ef0123456789",
+};
+const CMD = { EMPTY: 0x01, FULL: 0x02, CLEAR: 0x03, ORIENT: 0x10 };
+
+let device = null, server = null, ch = {};
+let lastStable = false;
+
+// ── helpers ──
+const $ = id => document.getElementById(id);
+function log(msg, cls) {
+  const el = $("log");
+  const t = new Date().toLocaleTimeString();
+  el.innerHTML += `<span class="t">${t}</span>  <span class="${cls||''}">${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(text, state) { // state: '', 'on', 'busy'
+  $("statusText").textContent = text;
+  $("dot").className = "dot" + (state ? " " + state : "");
+}
+const num = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : v.toFixed(d);
+
+function badge(text, cls) { return `<span class="badge ${cls||''}">${text}</span>`; }
+
+// ── decoders (little-endian) ──
+function decMeas(dv) {
+  const f = i => dv.getFloat32(i, true);
+  const flags = dv.getUint8(26);
+  return {
+    smooth: f(4), fill_height: f(12), volume: f(16), capacity: f(20),
+    level: dv.getUint16(24, true) / 100,
+    stable: !!(flags & 1), cal_valid: !!(flags & 2),
+    height_valid: !!(flags & 16), volume_valid: !!(flags & 32), capacity_valid: !!(flags & 64),
+    clamped: !!(flags & 128),
+  };
+}
+function decCal(dv) {
+  return { empty: dv.getFloat32(0, true), full: dv.getFloat32(4, true),
+           valid: !!dv.getUint8(8), source: dv.getUint8(9) };
+}
+function decBatt(dv) {
+  const flags = dv.getUint8(8);
+  const online = !!(flags & 1);
+  return {
+    online, mv: (online && flags & 2) ? dv.getUint16(0, true) : null,
+    ntc_c: (online && flags & 4) ? dv.getUint16(2, true) / 10 - 273.15 : null,
+    die_c: (online && flags & 16) ? dv.getUint16(4, true) / 10 - 273.15 : null,
+    low: !!(flags & 8),
+    current: (dv.byteLength >= 12 && online && flags & 32) ? dv.getInt16(10, true) : null,
+    uah: (dv.byteLength >= 16 && online && flags & 64) ? dv.getUint32(12, true) : null,
+  };
+}
+function decMotion(dv) {
+  const flags = dv.getUint8(8);
+  const ref = !!(flags & 16);
+  return { online: !!(flags & 1), std: (flags & 1) ? dv.getFloat32(4, true) : null,
+           moving: !!(flags & 4), tamper: !!(flags & 8), ref_set: ref,
+           tilt: ref ? dv.getUint8(9) : null };
+}
+
+// ── UI updates ──
+function onMeas(dv) {
+  const m = decMeas(dv); lastStable = m.stable;
+  const pct = m.cal_valid ? m.level : null;
+  $("ring").style.setProperty("--p", pct === null ? 0 : Math.max(0, Math.min(100, pct)));
+  $("levelPct").innerHTML = (pct === null ? "—" : pct.toFixed(1)) + '<small>%</small>';
+  $("vVol").textContent    = m.volume_valid   ? num(m.volume, 0) + " mL" : "—";
+  $("vHeight").textContent = m.height_valid   ? num(m.fill_height, 0) + " mm" : "—";
+  $("vCap").textContent    = m.capacity_valid ? num(m.capacity, 0) + " mL" : "—";
+  $("vPf").textContent     = num(m.smooth, 3) + " pF";
+  $("tCap").textContent    = m.capacity_valid ? num(m.capacity, 0) + " mL" : "—";
+  $("liveBadges").innerHTML =
+    badge(m.stable ? "Stable" : "Settling", m.stable ? "ok" : "warn") +
+    badge(m.cal_valid ? "Calibrated" : "Uncalibrated", m.cal_valid ? "ok" : "") +
+    (m.clamped ? badge("Clamped", "warn") : "");
+  // stable-gate the calibration buttons
+  $("btnEmpty").disabled = !m.stable;
+  $("btnFull").disabled  = !m.stable;
+}
+function onCal(dv) {
+  const c = decCal(dv);
+  $("cValid").textContent = c.valid ? "Yes" : "No";
+  $("cEmpty").textContent = Number.isNaN(c.empty) ? "—" : c.empty.toFixed(3) + " pF";
+  $("cFull").textContent  = Number.isNaN(c.full)  ? "—" : c.full.toFixed(3) + " pF";
+  $("cSrc").textContent   = ["none", "NVS", "live"][c.source] ?? "—";
+  $("calBadges").innerHTML = badge(c.valid ? "Two-point active" : "Not calibrated", c.valid ? "ok" : "warn");
+  $("btnClear").disabled = false;
+}
+function onBatt(dv) {
+  const b = decBatt(dv);
+  $("bMv").textContent = b.mv ?? "—";
+  $("bMa").textContent = b.current ?? "—";
+  $("bT").textContent  = b.ntc_c !== null ? b.ntc_c.toFixed(1) : (b.die_c !== null ? b.die_c.toFixed(1) : "—");
+  $("bQ").textContent  = b.uah !== null ? (b.uah / 1000).toFixed(2) : "—";
+}
+function onMotion(dv) {
+  const m = decMotion(dv);
+  $("mTilt").textContent = m.tilt ?? "—";
+  $("oTilt").textContent = m.tilt !== null ? m.tilt + "°" : "—";
+  $("mStd").textContent  = m.std !== null ? m.std.toFixed(3) : "—";
+  $("motionBadges").innerHTML =
+    badge(m.moving ? "Moving" : "Still", m.moving ? "warn" : "ok") +
+    (m.tamper ? badge("TAMPER", "bad") : badge("Secure", "ok")) +
+    badge(m.ref_set ? "Ref set" : "No ref", m.ref_set ? "" : "warn");
+}
+function decTank(dv) {
+  return { shape: dv.getUint8(0), height: dv.getFloat32(4, true),
+           dia: dv.getFloat32(8, true), len: dv.getFloat32(12, true), wid: dv.getFloat32(16, true) };
+}
+
+// ── connect / disconnect ──
+async function connect() {
+  if (!navigator.bluetooth) { log("Web Bluetooth not available in this browser.", "e"); return; }
+  try {
+    setStatus("Scanning…", "busy");
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [U.svc] }], optionalServices: [U.svc],
+    });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    setStatus("Connecting…", "busy");
+    server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(U.svc);
+
+    const get = async key => { try { return await svc.getCharacteristic(U[key]); } catch { return null; } };
+    ch = { meas: await get("meas"), cal: await get("cal"), cstat: await get("cstat"),
+           info: await get("info"), tank: await get("tank"), batt: await get("batt"), motion: await get("motion") };
+
+    $("dName").textContent = device.name || "FuelTraQ";
+    log(`Connected to ${device.name || device.id}`, "g");
+
+    // one-time reads
+    if (ch.info) { const dv = await ch.info.readValue();
+      $("dFw").textContent = (dv.getUint16(0, true) >> 8) + "." + (dv.getUint16(0, true) & 0xff);
+      $("dPeriod").textContent = dv.getUint16(2, true) + " s"; }
+    if (ch.cstat) onCal(await ch.cstat.readValue());
+    if (ch.tank) fillTank(decTank(await ch.tank.readValue()));
+
+    // subscriptions
+    const sub = async (c, cb) => { if (!c) return; await c.startNotifications();
+      c.addEventListener("characteristicvaluechanged", e => cb(e.target.value)); };
+    await sub(ch.meas, onMeas);
+    await sub(ch.cstat, onCal);
+    await sub(ch.batt, onBatt);
+    await sub(ch.motion, onMotion);
+
+    connectedUI(true);
+    setStatus(device.name || "Connected", "on");
+  } catch (e) {
+    setStatus("Offline", "");
+    if (e.name !== "NotFoundError") log("Connect failed: " + e.message, "e");
+    else log("No device selected (is the sensor in its service window?)");
+  }
+}
+function onDisconnected() { log("Disconnected", "e"); connectedUI(false); setStatus("Offline", ""); }
+function disconnect() { if (device && device.gatt.connected) device.gatt.disconnect(); }
+
+function connectedUI(on) {
+  $("connected").style.display = on ? "block" : "none";
+  $("disconnected").style.display = on ? "none" : "block";
+  for (const id of ["btnClear", "btnOrient", "btnTank", "btnDisconnect"]) $(id).disabled = !on;
+  if (!on) { $("btnEmpty").disabled = true; $("btnFull").disabled = true; }
+}
+
+// ── commands ──
+async function sendCmd(byte, label) {
+  if (!ch.cal) { log("CAL_CMD not available", "e"); return; }
+  try {
+    await ch.cal.writeValueWithoutResponse(Uint8Array.of(byte));
+    log(`Sent ${label} — watch the status update`, "g");
+  } catch (e) { log(`${label} failed: ${e.message}`, "e"); }
+}
+async function saveTank() {
+  if (!ch.tank) { log("TANK_CONFIG not available", "e"); return; }
+  const shape = +document.querySelector("#shapeSeg .on").dataset.shape;
+  const buf = new ArrayBuffer(20); const dv = new DataView(buf);
+  dv.setUint8(0, shape);
+  dv.setFloat32(4, parseFloat($("tHeight").value) || 0, true);
+  if (shape === 0) dv.setFloat32(8, parseFloat($("tDia").value) || 0, true);
+  else { dv.setFloat32(12, parseFloat($("tLen").value) || 0, true);
+         dv.setFloat32(16, parseFloat($("tWid").value) || 0, true); }
+  try {
+    await ch.tank.writeValue(buf);
+    const rb = decTank(await ch.tank.readValue());
+    fillTank(rb);
+    log(`Tank saved: shape=${rb.shape} h=${rb.height} mm`, "g");
+  } catch (e) { log("Tank save failed (check dimensions > 0): " + e.message, "e"); }
+}
+function fillTank(t) {
+  setShape(t.shape);
+  $("tHeight").value = t.height || "";
+  $("tDia").value = t.dia || ""; $("tLen").value = t.len || ""; $("tWid").value = t.wid || "";
+}
+function setShape(shape) {
+  document.querySelectorAll("#shapeSeg button").forEach(b => b.classList.toggle("on", +b.dataset.shape === shape));
+  $("cylFields").style.display = shape === 0 ? "block" : "none";
+  $("rectFields").style.display = shape === 1 ? "block" : "none";
+}
+
+// ── wiring ──
+$("btnConnect").onclick = connect;
+$("btnDisconnect").onclick = disconnect;
+$("btnEmpty").onclick  = () => sendCmd(CMD.EMPTY,  "SET EMPTY");
+$("btnFull").onclick   = () => sendCmd(CMD.FULL,   "SET FULL");
+$("btnClear").onclick  = () => sendCmd(CMD.CLEAR,  "CLEAR");
+$("btnOrient").onclick = () => sendCmd(CMD.ORIENT, "SET ORIENT");
+$("btnTank").onclick   = saveTank;
+document.querySelectorAll("#shapeSeg button").forEach(b => b.onclick = () => setShape(+b.dataset.shape));
+document.querySelectorAll("#tabbar button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tabbar button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+  $("view-" + b.dataset.tab).classList.add("active");
+});
+
+// orientation stays enabled while connected; it self-checks stability on-device
+device === null && log("Ready. Open the sensor's service window, then Connect.");
+</script>
